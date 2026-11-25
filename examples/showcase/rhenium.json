@@ -1,0 +1,13 @@
+{
+  "app_id": "com.rhenium.showcase",
+  "title": "Rhenium Enterprise Console — JS + C++ Host",
+  "width": 1180,
+  "height": 780,
+  "min_width": 860,
+  "min_height": 580,
+  "resizable": true,
+  "frameless": true,
+  "dark_titlebar": true,
+  "ui_dir": "ui",
+  "csp": "default-src 'self' https://rhenium.localhost; script-src 'self' https://rhenium.localhost; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:;"
+}

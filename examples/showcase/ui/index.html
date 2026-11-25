@@ -1,0 +1,213 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Rhenium Enterprise Console</title>
+  <link rel="stylesheet" href="/styles/tokens.css" />
+  <link rel="stylesheet" href="/styles/layout.css" />
+  <link rel="stylesheet" href="/styles/components.css" />
+  <script type="module" src="/js/main.js"></script>
+</head>
+<body>
+  <div class="app-shell">
+
+    <header class="titlebar" data-rh-drag-region>
+      <div class="titlebar-brand">
+        <span class="brand-mark" aria-hidden="true">Rh</span>
+        <div class="breadcrumb">
+          <span class="crumb-org">Rhenium</span>
+          <span class="crumb-sep" aria-hidden="true">/</span>
+          <span class="crumb-app">Enterprise Console</span>
+        </div>
+        <span class="status-pill status-success">
+          <span class="status-dot" aria-hidden="true"></span>
+          JS Mantık · C++ Kabuk
+        </span>
+      </div>
+
+      <div class="titlebar-controls">
+        <button id="btn-devtools" type="button" class="win-btn" aria-label="Geliştirici Araçlarını Aç" title="DevTools (Debug)">DevTools</button>
+        <button id="btn-minimize" type="button" class="win-btn icon" aria-label="Pencereyi Küçült" title="Küçült">&#x2013;</button>
+        <button id="btn-maximize" type="button" class="win-btn icon" aria-label="Pencereyi Büyüt veya Geri Yükle" title="Büyüt / Geri Yükle">&#x25A1;</button>
+        <button id="btn-close" type="button" class="win-btn icon danger" aria-label="Uygulamayı Kapat" title="Kapat">&#x2715;</button>
+      </div>
+    </header>
+
+    <div class="workspace">
+
+      <aside class="sidebar" aria-label="Çalışma Zamanı Özeti">
+        <div class="sidebar-group">
+          <h2 class="sidebar-heading">Çalışma Zamanı</h2>
+          <dl class="telemetry-list">
+            <div class="telemetry-row">
+              <dt>Origin</dt>
+              <dd class="mono">rhenium.localhost</dd>
+            </div>
+            <div class="telemetry-row">
+              <dt>Kabuk</dt>
+              <dd id="runtime-mode">Win32 + WebView2</dd>
+            </div>
+            <div class="telemetry-row">
+              <dt>İşçi Durumu</dt>
+              <dd><span id="sidebar-task-state" class="status-pill status-neutral">Hazır</span></dd>
+            </div>
+          </dl>
+        </div>
+
+        <nav class="sidebar-group" aria-label="Hızlı Native İşlemler">
+          <h2 class="sidebar-heading">Hızlı Native Eylemler</h2>
+          <div class="sidebar-actions">
+            <button id="side-open-file" type="button" class="btn btn-secondary btn-block">Dosya Aç...</button>
+            <button id="side-scan-folder" type="button" class="btn btn-secondary btn-block">Klasör Listele...</button>
+            <button id="side-save-report" type="button" class="btn btn-secondary btn-block">Raporu Kaydet...</button>
+            <button id="side-copy-summary" type="button" class="btn btn-secondary btn-block">Özeti Panoya Kopyala</button>
+            <button id="side-alert" type="button" class="btn btn-ghost btn-block">Native Onay Kutusu</button>
+          </div>
+        </nav>
+
+        <div class="sidebar-group sidebar-footer">
+          <h2 class="sidebar-heading">Görünüm &amp; Erişilebilirlik</h2>
+          <label class="switch-row">
+            <input id="toggle-contrast" type="checkbox" />
+            <span>Yüksek Kontrast Vurgu</span>
+          </label>
+          <button id="btn-toggle-tips" type="button" class="btn btn-ghost btn-block btn-sm">
+            Bilgi Panelini Aç/Kapat
+          </button>
+        </div>
+      </aside>
+
+      <main class="main-content">
+
+        <section class="kpi-grid" aria-label="Canlı Durum Metrikleri">
+          <article class="kpi-card">
+            <span class="kpi-label">JS Uygulama Sayacı</span>
+            <strong id="kpi-counter" class="kpi-value">0</strong>
+            <span id="kpi-counter-meta" class="kpi-meta">Sayaç: 0</span>
+          </article>
+
+          <article class="kpi-card">
+            <span class="kpi-label">Aktif Görevler</span>
+            <strong id="kpi-todo-count" class="kpi-value">2</strong>
+            <span id="kpi-todo-meta" class="kpi-meta">2 görev (1 tamamlandı)</span>
+          </article>
+
+          <article class="kpi-card">
+            <span class="kpi-label">Görev İlerlemesi</span>
+            <strong id="kpi-task-percent" class="kpi-value">0%</strong>
+            <span id="kpi-task-state" class="kpi-meta">Hazır</span>
+          </article>
+        </section>
+
+        <div id="tips-banner" class="callout-banner" role="note">
+          <span class="status-pill status-primary">JS-First Mimari</span>
+          <p>
+            C++ yalnızca pencereyi ve <code>window.rhenium</code> sistem köprüsünü başlatır.
+            Tüm uygulama fonksiyonları, state yönetimi ve olaylar modüler <code>ui/js/*.js</code> dosyalarında JavaScript ile çalışır.
+          </p>
+        </div>
+
+        <div class="panel-grid">
+
+          <section class="panel" aria-labelledby="panel-state-title">
+            <header class="panel-header">
+              <div>
+                <h2 id="panel-state-title">JS State &amp; Etkileşim</h2>
+                <p class="panel-subtitle">Tüm sayaç ve giriş mantığı JavaScript fonksiyonlarıyla yönetilir</p>
+              </div>
+              <span id="panel-counter-pill" class="status-pill status-primary">Sayaç: 0</span>
+            </header>
+
+            <div class="counter-toolbar">
+              <button id="btn-dec" type="button" class="btn btn-secondary" aria-label="Sayacı bir azalt">-1</button>
+              <div id="counter-display" class="counter-display mono" aria-live="polite">0</div>
+              <button id="btn-inc" type="button" class="btn btn-primary" aria-label="Sayacı bir artır">+1</button>
+              <button id="btn-reset" type="button" class="btn btn-ghost">Sıfırla</button>
+            </div>
+
+            <div class="field">
+              <label for="greeting-input">Operatör Adı (Anlık JS Güncelleme)</label>
+              <input id="greeting-input" type="text" value="Geliştirici" placeholder="Adınızı girin..." />
+              <p id="greeting-preview" class="field-preview" aria-live="polite">Merhaba, Geliştirici! (JavaScript)</p>
+            </div>
+          </section>
+
+          <section class="panel" aria-labelledby="panel-todo-title">
+            <header class="panel-header">
+              <div>
+                <h2 id="panel-todo-title">Görev Akışı (JavaScript)</h2>
+                <p class="panel-subtitle">Durum yönetimi ve güvenli DOM güncellemesi <code>app.js</code> üzerinde</p>
+              </div>
+              <span id="panel-todo-pill" class="status-pill status-neutral">2 görev</span>
+            </header>
+
+            <form id="todo-form" class="inline-form">
+              <label for="todo-title-input" class="sr-only">Yeni görev başlığı</label>
+              <input id="todo-title-input" type="text" name="title" placeholder="JS ile yeni görev ekle..." required />
+              <button type="submit" class="btn btn-primary">Ekle</button>
+            </form>
+
+            <ul id="todo-list" class="todo-list" aria-live="polite"></ul>
+          </section>
+
+          <section class="panel" aria-labelledby="panel-async-title">
+            <header class="panel-header">
+              <div>
+                <h2 id="panel-async-title">Asenkron JS İşlem Akışı</h2>
+                <p class="panel-subtitle">Arayüzü kilitlemeden adım adım ilerleme güncellemesi</p>
+              </div>
+              <span id="task-badge-running" class="status-pill status-warning" hidden>Çalışıyor</span>
+              <span id="task-badge-idle" class="status-pill status-success">Hazır</span>
+            </header>
+
+            <p id="task-status" class="status-message" aria-live="polite">JavaScript görev çalıştırıcısı hazır.</p>
+
+            <div class="progress-wrapper" role="region" aria-label="Görev ilerleme durumu">
+              <div class="progress-track">
+                <div id="progress-fill" class="progress-fill"></div>
+              </div>
+              <span id="progress-label" class="progress-label mono">0%</span>
+            </div>
+
+            <div class="panel-actions">
+              <button id="btn-benchmark" type="button" class="btn btn-primary">
+                Asenkron Görevi Başlat
+              </button>
+            </div>
+          </section>
+
+          <section class="panel" aria-labelledby="panel-native-title">
+            <header class="panel-header">
+              <div>
+                <h2 id="panel-native-title">Native Köprü (<code>window.rhenium</code>)</h2>
+                <p class="panel-subtitle">JS'den Promise ile Win32 dosya, pano, dialog ve shell çağrıları</p>
+              </div>
+              <span class="status-pill status-neutral">Bridge</span>
+            </header>
+
+            <div class="native-actions-grid">
+              <button id="btn-open-file" type="button" class="btn btn-secondary">Dosya Oku (<code>fs</code>)</button>
+              <button id="btn-open-folder" type="button" class="btn btn-secondary">Klasör Listele</button>
+              <button id="btn-save-report" type="button" class="btn btn-secondary">Rapor Kaydet</button>
+              <button id="btn-copy-summary" type="button" class="btn btn-secondary">Panoya Kopyala</button>
+              <button id="btn-read-clipboard" type="button" class="btn btn-secondary">Panoyu Oku</button>
+              <button id="btn-native-alert" type="button" class="btn btn-secondary">Mesaj Kutusu</button>
+            </div>
+
+            <a id="btn-external-link" class="btn btn-ghost" href="https://github.com">Dış Link (Tarayıcıda Açılır)</a>
+
+            <div class="terminal-box" aria-live="polite">
+              <div class="terminal-header">
+                <span>BRIDGE ÇIKTISI</span>
+                <span class="mono">window.rhenium</span>
+              </div>
+              <pre id="native-output" class="mono">Henüz bir native köprü işlemi çalıştırılmadı.</pre>
+            </div>
+          </section>
+        </div>
+      </main>
+    </div>
+  </div>
+</body>
+</html>
