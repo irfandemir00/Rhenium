@@ -138,6 +138,32 @@ std::optional<std::filesystem::path> save_file_dialog(
     auto filter_storage = build_wide_filters(filters);
     apply_filters(dlg, filter_storage);
 
+    std::string default_ext;
+    const size_t slash_pos = default_name.find_last_of("/\\");
+    const size_t dot_pos = default_name.rfind('.');
+    if (dot_pos != std::string::npos &&
+        (slash_pos == std::string::npos || dot_pos > slash_pos) &&
+        dot_pos + 1 < default_name.size()) {
+        default_ext = default_name.substr(dot_pos + 1);
+    } else if (!filters.empty()) {
+        std::string_view pat = filters[0].pattern;
+        const size_t semi = pat.find(';');
+        if (semi != std::string_view::npos) {
+            pat = pat.substr(0, semi);
+        }
+        if (pat.starts_with("*.")) {
+            pat.remove_prefix(2);
+        } else if (pat.starts_with(".")) {
+            pat.remove_prefix(1);
+        }
+        if (!pat.empty() && pat != "*") {
+            default_ext = std::string(pat);
+        }
+    }
+    if (!default_ext.empty()) {
+        dlg->SetDefaultExtension(utf8_to_wide(default_ext).c_str());
+    }
+
     std::optional<std::filesystem::path> result;
     if (SUCCEEDED(dlg->Show(static_cast<HWND>(owner_hwnd)))) {
         result = extract_dialog_result(dlg);

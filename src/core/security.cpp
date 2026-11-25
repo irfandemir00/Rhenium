@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cwctype>
 #include <string>
 #include <vector>
 
@@ -118,7 +119,7 @@ std::string normalize_asset_path(std::string_view request_path) {
             ? decoded.substr(start)
             : decoded.substr(start, slash - start);
 
-        if (seg == ".." || seg == ".") {
+        if (seg == ".." || seg == "." || seg.find(':') != std::string::npos) {
             return {};
         }
         if (!seg.empty()) {
@@ -163,6 +164,116 @@ std::string format_response_headers(std::string_view mime, std::string_view csp,
         headers += "\r\n";
     }
     return headers;
+}
+
+namespace {
+
+std::filesystem::path normalize_fs_path(const std::filesystem::path& p) {
+    if (p.empty()) {
+        return {};
+    }
+    std::error_code ec;
+    auto canonical = std::filesystem::weakly_canonical(p, ec);
+    if (!ec && !canonical.empty()) {
+        return canonical.lexically_normal();
+    }
+    auto abs = std::filesystem::absolute(p, ec);
+    if (!ec && !abs.empty()) {
+        return abs.lexically_normal();
+    }
+    return p.lexically_normal();
+}
+
+bool paths_component_equal(const std::filesystem::path& a, const std::filesystem::path& b) {
+#ifdef _WIN32
+    std::wstring wa = a.wstring();
+    std::wstring wb = b.wstring();
+    if (wa.size() != wb.size()) {
+        return false;
+    }
+    for (size_t i = 0; i < wa.size(); ++i) {
+        if (std::towlower(wa[i]) != std::towlower(wb[i])) {
+            return false;
+        }
+    }
+    return true;
+#else
+    return a == b;
+#endif
+}
+
+bool is_within_directory(const std::filesystem::path& dir, const std::filesystem::path& target) {
+    auto dir_it = dir.begin();
+    auto tgt_it = target.begin();
+    for (; dir_it != dir.end(); ++dir_it, ++tgt_it) {
+        if (dir_it->empty() || *dir_it == ".") {
+            break;
+        }
+        if (tgt_it == target.end() || !paths_component_equal(*dir_it, *tgt_it)) {
+            return false;
+        }
+    }
+    return true;
+}
+
+bool is_exact_path(const std::filesystem::path& a, const std::filesystem::path& b) {
+    auto it_a = a.begin();
+    auto it_b = b.begin();
+    while (it_a != a.end() && it_b != b.end()) {
+        if (!paths_component_equal(*it_a, *it_b)) {
+            return false;
+        }
+        ++it_a;
+        ++it_b;
+    }
+    return it_a == a.end() && it_b == b.end();
+}
+
+}
+
+void FsScope::allow_all(bool enabled) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    allow_all_ = enabled;
+}
+
+void FsScope::allow_directory(const std::filesystem::path& dir) {
+    auto norm = normalize_fs_path(dir);
+    if (norm.empty()) {
+        return;
+    }
+    std::lock_guard<std::mutex> lock(mutex_);
+    allowed_dirs_.push_back(std::move(norm));
+}
+
+void FsScope::allow_file(const std::filesystem::path& file) {
+    auto norm = normalize_fs_path(file);
+    if (norm.empty()) {
+        return;
+    }
+    std::lock_guard<std::mutex> lock(mutex_);
+    allowed_files_.push_back(std::move(norm));
+}
+
+bool FsScope::is_allowed(const std::filesystem::path& target) const {
+    auto norm = normalize_fs_path(target);
+    if (norm.empty()) {
+        return false;
+    }
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (allow_all_) {
+        return true;
+    }
+    for (const auto& file : allowed_files_) {
+        if (is_exact_path(file, norm)) {
+            return true;
+        }
+    }
+    for (const auto& dir : allowed_dirs_) {
+        if (is_within_directory(dir, norm)) {
+            return true;
+        }
+    }
+    return false;
 }
 
 }

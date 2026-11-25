@@ -1,7 +1,9 @@
 #pragma once
 
+#include <cstddef>
 #include <filesystem>
 #include <string>
+#include <vector>
 #include <nlohmann/json.hpp>
 
 namespace rhenium {
@@ -28,6 +30,8 @@ struct Config {
     std::string start_path = "/index.html";
     std::string ui_dir = "ui";
     std::string csp;
+    std::vector<std::string> fs_allowed_roots;
+    size_t max_read_file_bytes = 16 * 1024 * 1024;
 
     static Config from_json(const nlohmann::json& j);
     static Config from_file(const std::filesystem::path& path);

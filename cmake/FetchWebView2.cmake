@@ -5,10 +5,24 @@ set(RHENIUM_WEBVIEW2_URL
     "https://api.nuget.org/v3-flatcontainer/microsoft.web.webview2/${RHENIUM_WEBVIEW2_VERSION}/microsoft.web.webview2.${RHENIUM_WEBVIEW2_VERSION}.nupkg"
 )
 
+set(_webview2_arch "x64")
+if(CMAKE_VS_PLATFORM_NAME)
+    string(TOLOWER "${CMAKE_VS_PLATFORM_NAME}" _vs_plat)
+    if(_vs_plat STREQUAL "arm64")
+        set(_webview2_arch "arm64")
+    elseif(_vs_plat STREQUAL "win32" OR _vs_plat STREQUAL "x86")
+        set(_webview2_arch "x86")
+    endif()
+elseif(CMAKE_SYSTEM_PROCESSOR MATCHES "^(ARM64|arm64|aarch64)$")
+    set(_webview2_arch "arm64")
+elseif(CMAKE_SIZEOF_VOID_P EQUAL 4)
+    set(_webview2_arch "x86")
+endif()
+
 set(_webview2_root "${CMAKE_BINARY_DIR}/_deps/webview2")
 set(_webview2_nupkg "${CMAKE_BINARY_DIR}/_deps/microsoft.web.webview2.${RHENIUM_WEBVIEW2_VERSION}.nupkg")
 set(_webview2_header "${_webview2_root}/build/native/include/WebView2.h")
-set(_webview2_loader "${_webview2_root}/build/native/x64/WebView2Loader.dll")
+set(_webview2_loader "${_webview2_root}/build/native/${_webview2_arch}/WebView2Loader.dll")
 
 if(NOT EXISTS "${_webview2_header}" OR NOT EXISTS "${_webview2_loader}")
     file(MAKE_DIRECTORY "${CMAKE_BINARY_DIR}/_deps")

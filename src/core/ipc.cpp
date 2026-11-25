@@ -14,18 +14,18 @@ bool IpcRouter::is_async(std::string_view name) const {
 }
 
 IpcResult IpcRouter::invoke(std::string_view name, const nlohmann::json& args) const {
-    HandlerFn handler;
+    std::shared_ptr<detail::CallableBase> callable;
     {
         std::lock_guard<std::mutex> lock(mutex_);
         auto it = commands_.find(std::string(name));
         if (it == commands_.end()) {
             return IpcResult{false, nullptr, "Unknown command: " + std::string(name)};
         }
-        handler = it->second.handler;
+        callable = it->second.callable;
     }
 
     try {
-        nlohmann::json result = handler(args);
+        nlohmann::json result = callable->call(args);
         return IpcResult{true, std::move(result), {}};
     } catch (const std::exception& e) {
         return IpcResult{false, nullptr, e.what()};

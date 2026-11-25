@@ -3,9 +3,46 @@
 #include "process.hpp"
 
 #include <cctype>
+#include <string_view>
 #include <nlohmann/json.hpp>
 
 namespace rhenium::cli {
+
+namespace {
+
+std::string escape_html(std::string_view input) {
+    std::string out;
+    out.reserve(input.size() + 8);
+    for (char c : input) {
+        switch (c) {
+            case '&':  out += "&amp;";  break;
+            case '<':  out += "&lt;";   break;
+            case '>':  out += "&gt;";   break;
+            case '"':  out += "&quot;"; break;
+            case '\'': out += "&#39;";  break;
+            default:   out.push_back(c); break;
+        }
+    }
+    return out;
+}
+
+std::string escape_js_single_quoted(std::string_view input) {
+    std::string out;
+    out.reserve(input.size() + 8);
+    for (char c : input) {
+        switch (c) {
+            case '\\': out += "\\\\"; break;
+            case '\'': out += "\\'";  break;
+            case '\n': out += "\\n";  break;
+            case '\r': out += "\\r";  break;
+            case '\t': out += "\\t";  break;
+            default:   out.push_back(c); break;
+        }
+    }
+    return out;
+}
+
+}
 
 std::string sanitize_identifier(const std::string& name) {
     std::string out;
@@ -27,6 +64,8 @@ bool scaffold_project(
     const std::filesystem::path& project_dir,
     const std::string& default_rhenium_dir) {
     const std::string target_name = sanitize_identifier(raw_name);
+    const std::string html_name = escape_html(raw_name);
+    const std::string js_name = escape_js_single_quoted(raw_name);
 
     const std::string cmake_content =
         "cmake_minimum_required(VERSION 3.22)\n"
@@ -46,8 +85,18 @@ bool scaffold_project(
         "    src/main.cpp\n"
         ")\n\n"
         "target_link_libraries(" + target_name + " PRIVATE rhenium::rhenium)\n"
+        "target_link_options(" + target_name + " PRIVATE\n"
+        "    $<$<CXX_COMPILER_ID:MSVC>:/ENTRY:mainCRTStartup>\n"
+        ")\n"
         "rhenium_embed_assets(TARGET " + target_name + " DIRECTORY \"${CMAKE_CURRENT_SOURCE_DIR}/ui\")\n"
-        "rhenium_copy_webview2_loader(" + target_name + ")\n";
+        "rhenium_copy_webview2_loader(" + target_name + ")\n"
+        "add_custom_command(TARGET " + target_name + " POST_BUILD\n"
+        "    COMMAND ${CMAKE_COMMAND} -E copy_if_different\n"
+        "        \"${CMAKE_CURRENT_SOURCE_DIR}/rhenium.json\"\n"
+        "        \"$<TARGET_FILE_DIR:" + target_name + ">/rhenium.json\"\n"
+        "    COMMENT \"Copying rhenium.json for " + target_name + "\"\n"
+        "    VERBATIM\n"
+        ")\n";
 
     const nlohmann::json config_json = {
         {"app_id", "com.rhenium." + target_name},
@@ -74,7 +123,7 @@ bool scaffold_project(
         "<head>\n"
         "  <meta charset=\"UTF-8\">\n"
         "  <meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\">\n"
-        "  <title>" + raw_name + "</title>\n"
+        "  <title>" + html_name + "</title>\n"
         "  <link rel=\"stylesheet\" href=\"/styles.css\">\n"
         "  <script type=\"module\" src=\"/app.js\"></script>\n"
         "</head>\n"
@@ -82,7 +131,7 @@ bool scaffold_project(
         "  <main class=\"panel\">\n"
         "    <header class=\"panel-header\">\n"
         "      <div>\n"
-        "        <h1>" + raw_name + "</h1>\n"
+        "        <h1>" + html_name + "</h1>\n"
         "        <p id=\"status\" class=\"subtitle\" aria-live=\"polite\">JavaScript ile calisiyor</p>\n"
         "      </div>\n"
         "      <span class=\"pill\">JS + C++ Kabuk</span>\n"
@@ -163,7 +212,7 @@ bool scaffold_project(
         "});\n\n"
         "document.getElementById('btn-alert').addEventListener('click', async () => {\n"
         "  await rh.dialog.messageBox({\n"
-        "    title: '" + raw_name + "',\n"
+        "    title: '" + js_name + "',\n"
         "    message: `JavaScript'ten C++ native dialog cagrildi! Sayac: ${count}`\n"
         "  });\n"
         "});\n\n"

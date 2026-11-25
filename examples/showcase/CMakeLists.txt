@@ -25,3 +25,7 @@ target_compile_options(rhenium_showcase PRIVATE
     $<$<CXX_COMPILER_ID:GNU,Clang>:-Wall -Wextra -Wpedantic>
     $<$<CXX_COMPILER_ID:MSVC>:/W4 /utf-8>
 )
+
+target_link_options(rhenium_showcase PRIVATE
+    $<$<CXX_COMPILER_ID:MSVC>:/ENTRY:mainCRTStartup>
+)

@@ -36,6 +36,7 @@ public:
     bool is_maximized() const;
     void close();
     void start_drag();
+    void start_resize(std::string_view edge);
     void open_devtools();
     void reload();
     void* native_handle() const;
@@ -46,7 +47,7 @@ public:
 
 private:
     struct Impl;
-    std::unique_ptr<Impl> impl_;
+    std::shared_ptr<Impl> impl_;
 };
 
 }

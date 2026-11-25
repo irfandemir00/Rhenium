@@ -15,8 +15,9 @@ namespace rhenium {
 namespace {
 
 std::string to_lower_ext(std::string_view path) {
+    const size_t slash = path.find_last_of("/\\");
     const size_t dot = path.rfind('.');
-    if (dot == std::string_view::npos) {
+    if (dot == std::string_view::npos || (slash != std::string_view::npos && dot < slash)) {
         return {};
     }
     std::string ext(path.substr(dot));
@@ -56,13 +57,22 @@ std::string mime_type_for_path(std::string_view path) {
         {".js", "application/javascript; charset=utf-8"},
         {".mjs", "application/javascript; charset=utf-8"},
         {".json", "application/json; charset=utf-8"},
+        {".map", "application/json; charset=utf-8"},
+        {".wasm", "application/wasm"},
         {".svg", "image/svg+xml"},
         {".png", "image/png"},
         {".jpg", "image/jpeg"},
         {".jpeg", "image/jpeg"},
         {".gif", "image/gif"},
         {".webp", "image/webp"},
+        {".avif", "image/avif"},
         {".ico", "image/x-icon"},
+        {".mp4", "video/mp4"},
+        {".webm", "video/webm"},
+        {".mp3", "audio/mpeg"},
+        {".wav", "audio/wav"},
+        {".ogg", "audio/ogg"},
+        {".pdf", "application/pdf"},
         {".woff", "font/woff"},
         {".woff2", "font/woff2"},
         {".ttf", "font/ttf"},
@@ -176,6 +186,9 @@ std::optional<AssetData> AssetResolver::resolve(std::string_view request_path) c
     }
 
     const std::streamsize size = ifs.tellg();
+    if (size < 0) {
+        return std::nullopt;
+    }
     ifs.seekg(0, std::ios::beg);
 
     AssetData data;

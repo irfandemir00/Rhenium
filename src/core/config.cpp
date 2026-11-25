@@ -39,6 +39,8 @@ Config Config::from_json(const nlohmann::json& j) {
     read_if_present(j, "start_path", cfg.start_path);
     read_if_present(j, "ui_dir", cfg.ui_dir);
     read_if_present(j, "csp", cfg.csp);
+    read_if_present(j, "fs_allowed_roots", cfg.fs_allowed_roots);
+    read_if_present(j, "max_read_file_bytes", cfg.max_read_file_bytes);
 
     if (auto win = j.find("window"); win != j.end() && win->is_object()) {
         read_if_present(*win, "title", cfg.title);
@@ -56,12 +58,24 @@ Config Config::from_json(const nlohmann::json& j) {
     if (auto sec = j.find("security"); sec != j.end() && sec->is_object()) {
         read_if_present(*sec, "csp", cfg.csp);
         read_if_present(*sec, "devtools", cfg.devtools);
+        read_if_present(*sec, "fs_allowed_roots", cfg.fs_allowed_roots);
+        read_if_present(*sec, "max_read_file_bytes", cfg.max_read_file_bytes);
     }
 
-    if (cfg.width < 100) cfg.width = 100;
-    if (cfg.height < 100) cfg.height = 100;
     if (cfg.min_width < 0) cfg.min_width = 0;
     if (cfg.min_height < 0) cfg.min_height = 0;
+    if (cfg.max_width < 0) cfg.max_width = 0;
+    if (cfg.max_height < 0) cfg.max_height = 0;
+    if (cfg.max_width > 0 && cfg.max_width < 100) cfg.max_width = 100;
+    if (cfg.max_height > 0 && cfg.max_height < 100) cfg.max_height = 100;
+    if (cfg.max_width > 0 && cfg.min_width > cfg.max_width) cfg.min_width = cfg.max_width;
+    if (cfg.max_height > 0 && cfg.min_height > cfg.max_height) cfg.min_height = cfg.max_height;
+    if (cfg.width < 100) cfg.width = 100;
+    if (cfg.height < 100) cfg.height = 100;
+    if (cfg.min_width > 0 && cfg.width < cfg.min_width) cfg.width = cfg.min_width;
+    if (cfg.min_height > 0 && cfg.height < cfg.min_height) cfg.height = cfg.min_height;
+    if (cfg.max_width > 0 && cfg.width > cfg.max_width) cfg.width = cfg.max_width;
+    if (cfg.max_height > 0 && cfg.height > cfg.max_height) cfg.height = cfg.max_height;
     if (cfg.start_path.empty() || cfg.start_path.front() != '/') {
         cfg.start_path = "/" + cfg.start_path;
     }

@@ -9,6 +9,7 @@
 #include "rhenium/core/assets.hpp"
 #include "rhenium/core/config.hpp"
 #include "rhenium/core/ipc.hpp"
+#include "rhenium/core/security.hpp"
 #include "rhenium/platform/window.hpp"
 
 namespace rhenium {
@@ -40,6 +41,8 @@ public:
 
     const Config& config() const { return config_; }
     const AssetResolver& resolver() const { return resolver_; }
+    security::FsScope& fs_scope() { return fs_scope_; }
+    const security::FsScope& fs_scope() const { return fs_scope_; }
 
     void dispatch(std::function<void()> fn);
     void on_ready(std::function<void()> fn);
@@ -54,6 +57,7 @@ private:
 
     Config config_;
     AssetResolver resolver_;
+    security::FsScope fs_scope_;
     IpcRouter router_;
     Window window_;
     std::unique_ptr<RuntimeImpl> runtime_;

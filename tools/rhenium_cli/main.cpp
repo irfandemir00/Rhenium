@@ -24,7 +24,17 @@ void print_help() {
         << "  rhenium --version                          Show version\n";
 }
 
+bool has_ninja_on_path() {
+    return SearchPathW(nullptr, L"ninja", L".exe", 0, nullptr, nullptr) != 0;
+}
+
 int cmd_init(const std::string& raw_name, const fs::path& parent_dir) {
+    if (raw_name.empty() || raw_name == "." || raw_name == ".." ||
+        raw_name.find_first_of("/\\:") != std::string::npos) {
+        std::cerr << "Invalid project name: " << raw_name << "\n";
+        return 1;
+    }
+
     const fs::path project_dir = parent_dir / utf8_to_path(raw_name);
 
     std::error_code ec;
@@ -46,16 +56,35 @@ int cmd_init(const std::string& raw_name, const fs::path& parent_dir) {
 }
 
 int cmd_dev(const fs::path& project_dir) {
+    std::error_code ec;
+    if (!fs::exists(project_dir / "CMakeLists.txt", ec)) {
+        std::cerr << "[rhenium dev] Not a Rhenium/CMake project (CMakeLists.txt missing): "
+                  << path_to_utf8(project_dir) << "\n";
+        return 1;
+    }
+
     const fs::path build_dir = project_dir / "build" / "dev";
+    const bool use_ninja = has_ninja_on_path();
     std::cout << "[rhenium dev] Configuring Debug build...\n";
-    if (run_process({
-            L"cmake", L"-S", project_dir.wstring(), L"-B", build_dir.wstring(),
-            L"-G", L"Ninja", L"-DCMAKE_BUILD_TYPE=Debug"}, project_dir) != 0) {
+    std::vector<std::wstring> configure_args = {
+        L"cmake", L"-S", project_dir.wstring(), L"-B", build_dir.wstring()
+    };
+    if (use_ninja) {
+        configure_args.push_back(L"-G");
+        configure_args.push_back(L"Ninja");
+        configure_args.push_back(L"-DCMAKE_BUILD_TYPE=Debug");
+    }
+    if (run_process(configure_args, project_dir) != 0) {
         return 1;
     }
 
     std::cout << "[rhenium dev] Building...\n";
-    if (run_process({L"cmake", L"--build", build_dir.wstring()}, project_dir) != 0) {
+    std::vector<std::wstring> build_args = {L"cmake", L"--build", build_dir.wstring()};
+    if (!use_ninja) {
+        build_args.push_back(L"--config");
+        build_args.push_back(L"Debug");
+    }
+    if (run_process(build_args, project_dir) != 0) {
         return 1;
     }
 
@@ -70,18 +99,38 @@ int cmd_dev(const fs::path& project_dir) {
 }
 
 int cmd_build(const fs::path& project_dir) {
+    std::error_code ec;
+    if (!fs::exists(project_dir / "CMakeLists.txt", ec)) {
+        std::cerr << "[rhenium build] Not a Rhenium/CMake project (CMakeLists.txt missing): "
+                  << path_to_utf8(project_dir) << "\n";
+        return 1;
+    }
+
     const fs::path build_dir = project_dir / "build" / "release";
     const fs::path dist_dir = project_dir / "dist";
+    const bool use_ninja = has_ninja_on_path();
 
     std::cout << "[rhenium build] Configuring Release build (embedded assets)...\n";
-    if (run_process({
-            L"cmake", L"-S", project_dir.wstring(), L"-B", build_dir.wstring(),
-            L"-G", L"Ninja", L"-DCMAKE_BUILD_TYPE=Release", L"-DRHENIUM_EMBED_ASSETS=ON"}, project_dir) != 0) {
+    std::vector<std::wstring> configure_args = {
+        L"cmake", L"-S", project_dir.wstring(), L"-B", build_dir.wstring()
+    };
+    if (use_ninja) {
+        configure_args.push_back(L"-G");
+        configure_args.push_back(L"Ninja");
+        configure_args.push_back(L"-DCMAKE_BUILD_TYPE=Release");
+    }
+    configure_args.push_back(L"-DRHENIUM_EMBED_ASSETS=ON");
+    if (run_process(configure_args, project_dir) != 0) {
         return 1;
     }
 
     std::cout << "[rhenium build] Building...\n";
-    if (run_process({L"cmake", L"--build", build_dir.wstring()}, project_dir) != 0) {
+    std::vector<std::wstring> build_args = {L"cmake", L"--build", build_dir.wstring()};
+    if (!use_ninja) {
+        build_args.push_back(L"--config");
+        build_args.push_back(L"Release");
+    }
+    if (run_process(build_args, project_dir) != 0) {
         return 1;
     }
 
@@ -91,7 +140,6 @@ int cmd_build(const fs::path& project_dir) {
         return 1;
     }
 
-    std::error_code ec;
     fs::create_directories(dist_dir, ec);
     fs::copy_file(*exe, dist_dir / exe->filename(), fs::copy_options::overwrite_existing, ec);
     if (ec) {
@@ -99,9 +147,19 @@ int cmd_build(const fs::path& project_dir) {
         return 1;
     }
 
-    const fs::path loader = build_dir / "WebView2Loader.dll";
+    const fs::path exe_dir = exe->parent_path();
+    const fs::path loader = fs::exists(exe_dir / "WebView2Loader.dll", ec)
+        ? (exe_dir / "WebView2Loader.dll")
+        : (build_dir / "WebView2Loader.dll");
     if (fs::exists(loader, ec)) {
         fs::copy_file(loader, dist_dir / "WebView2Loader.dll", fs::copy_options::overwrite_existing, ec);
+    }
+
+    const fs::path config_src = fs::exists(project_dir / "rhenium.json", ec)
+        ? (project_dir / "rhenium.json")
+        : (exe_dir / "rhenium.json");
+    if (fs::exists(config_src, ec)) {
+        fs::copy_file(config_src, dist_dir / "rhenium.json", fs::copy_options::overwrite_existing, ec);
     }
 
     std::cout << "[rhenium build] Release bundle ready in: " << path_to_utf8(dist_dir) << "\n";

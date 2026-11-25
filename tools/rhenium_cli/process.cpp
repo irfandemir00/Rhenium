@@ -3,7 +3,6 @@
 #include <windows.h>
 
 #include <fstream>
-#include <fstream>
 #include <iostream>
 
 namespace fs = std::filesystem;
@@ -17,14 +16,22 @@ std::wstring quote_arg(const std::wstring& arg) {
         return arg;
     }
     std::wstring out = L"\"";
+    size_t backslashes = 0;
     for (wchar_t c : arg) {
-        if (c == L'"') {
-            out += L"\\\"";
+        if (c == L'\\') {
+            ++backslashes;
+        } else if (c == L'"') {
+            out.append(backslashes * 2 + 1, L'\\');
+            out.push_back(L'"');
+            backslashes = 0;
         } else {
+            out.append(backslashes, L'\\');
             out.push_back(c);
+            backslashes = 0;
         }
     }
-    out += L"\"";
+    out.append(backslashes * 2, L'\\');
+    out.push_back(L'"');
     return out;
 }
 
@@ -116,13 +123,22 @@ std::optional<fs::path> find_built_executable(const fs::path& build_dir) {
     std::error_code ec;
     if (!fs::exists(build_dir, ec)) return std::nullopt;
 
-    for (const auto& entry : fs::directory_iterator(build_dir, ec)) {
-        if (!entry.is_regular_file(ec)) continue;
-        const auto& p = entry.path();
-        if (p.extension() == L".exe") {
-            const std::string name = path_to_utf8(p.filename());
-            if (name != "rhenium_pack.exe" && name != "rhenium.exe") {
-                return p;
+    const std::vector<fs::path> candidates = {
+        build_dir,
+        build_dir / "Release",
+        build_dir / "Debug",
+    };
+
+    for (const auto& dir : candidates) {
+        if (!fs::exists(dir, ec)) continue;
+        for (const auto& entry : fs::directory_iterator(dir, ec)) {
+            if (!entry.is_regular_file(ec)) continue;
+            const auto& p = entry.path();
+            if (p.extension() == L".exe") {
+                const std::string name = path_to_utf8(p.filename());
+                if (name != "rhenium_pack.exe" && name != "rhenium.exe") {
+                    return p;
+                }
             }
         }
     }

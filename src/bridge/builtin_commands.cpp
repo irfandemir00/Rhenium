@@ -12,6 +12,10 @@
 #include <string_view>
 #include <vector>
 
+#ifndef RHENIUM_VERSION
+#define RHENIUM_VERSION "0.1.0"
+#endif
+
 namespace rhenium::detail {
 
 namespace {
@@ -56,7 +60,11 @@ void register_builtin_commands(App& app) {
     app.command("rh:dialog:openFile", [&app](nlohmann::json opts) -> nlohmann::json {
         const std::string title = opts.is_object() ? opts.value("title", "Open File") : "Open File";
         auto picked = native::open_file_dialog(app.window().native_handle(), title, parse_file_filters(opts));
-        return picked.has_value() ? nlohmann::json(native::wide_to_utf8(picked->wstring())) : nlohmann::json(nullptr);
+        if (picked.has_value()) {
+            app.fs_scope().allow_file(*picked);
+            return nlohmann::json(native::wide_to_utf8(picked->wstring()));
+        }
+        return nlohmann::json(nullptr);
     });
 
     app.command("rh:dialog:saveFile", [&app](nlohmann::json opts) -> nlohmann::json {
@@ -64,13 +72,21 @@ void register_builtin_commands(App& app) {
         const std::string default_name = opts.is_object() ? opts.value("defaultName", "") : "";
         auto picked = native::save_file_dialog(
             app.window().native_handle(), title, default_name, parse_file_filters(opts));
-        return picked.has_value() ? nlohmann::json(native::wide_to_utf8(picked->wstring())) : nlohmann::json(nullptr);
+        if (picked.has_value()) {
+            app.fs_scope().allow_file(*picked);
+            return nlohmann::json(native::wide_to_utf8(picked->wstring()));
+        }
+        return nlohmann::json(nullptr);
     });
 
     app.command("rh:dialog:openFolder", [&app](nlohmann::json opts) -> nlohmann::json {
         const std::string title = opts.is_object() ? opts.value("title", "Select Folder") : "Select Folder";
         auto picked = native::open_folder_dialog(app.window().native_handle(), title);
-        return picked.has_value() ? nlohmann::json(native::wide_to_utf8(picked->wstring())) : nlohmann::json(nullptr);
+        if (picked.has_value()) {
+            app.fs_scope().allow_directory(*picked);
+            return nlohmann::json(native::wide_to_utf8(picked->wstring()));
+        }
+        return nlohmann::json(nullptr);
     });
 
     app.command("rh:dialog:messageBox", [&app](nlohmann::json opts) -> bool {
@@ -89,8 +105,19 @@ void register_builtin_commands(App& app) {
         return native::clipboard_set_text(text);
     });
 
-    app.async_command("rh:fs:readText", [](std::string path) -> std::string {
+    app.async_command("rh:fs:readText", [&app](std::string path) -> std::string {
         const std::filesystem::path fs_path(native::utf8_to_wide(path));
+        if (!app.fs_scope().is_allowed(fs_path)) {
+            throw std::runtime_error("Filesystem access denied: " + path);
+        }
+        std::error_code ec;
+        const size_t max_bytes = app.config().max_read_file_bytes;
+        if (max_bytes > 0) {
+            const auto sz = std::filesystem::file_size(fs_path, ec);
+            if (!ec && sz > max_bytes) {
+                throw std::runtime_error("File exceeds maximum allowed read size");
+            }
+        }
         std::ifstream ifs(fs_path, std::ios::binary);
         if (!ifs.is_open()) {
             throw std::runtime_error("Cannot open file for reading: " + path);
@@ -100,8 +127,11 @@ void register_builtin_commands(App& app) {
         return ss.str();
     });
 
-    app.async_command("rh:fs:writeText", [](std::string path, std::string content) -> bool {
+    app.async_command("rh:fs:writeText", [&app](std::string path, std::string content) -> bool {
         const std::filesystem::path fs_path(native::utf8_to_wide(path));
+        if (!app.fs_scope().is_allowed(fs_path)) {
+            throw std::runtime_error("Filesystem access denied: " + path);
+        }
         std::error_code ec;
         if (fs_path.has_parent_path()) {
             std::filesystem::create_directories(fs_path.parent_path(), ec);
@@ -117,13 +147,20 @@ void register_builtin_commands(App& app) {
         return true;
     });
 
-    app.async_command("rh:fs:exists", [](std::string path) -> bool {
+    app.async_command("rh:fs:exists", [&app](std::string path) -> bool {
+        const std::filesystem::path fs_path(native::utf8_to_wide(path));
+        if (!app.fs_scope().is_allowed(fs_path)) {
+            throw std::runtime_error("Filesystem access denied: " + path);
+        }
         std::error_code ec;
-        return std::filesystem::exists(std::filesystem::path(native::utf8_to_wide(path)), ec);
+        return std::filesystem::exists(fs_path, ec);
     });
 
-    app.async_command("rh:fs:stat", [](std::string path) -> nlohmann::json {
+    app.async_command("rh:fs:stat", [&app](std::string path) -> nlohmann::json {
         const std::filesystem::path fs_path(native::utf8_to_wide(path));
+        if (!app.fs_scope().is_allowed(fs_path)) {
+            throw std::runtime_error("Filesystem access denied: " + path);
+        }
         std::error_code ec;
         const bool exists = std::filesystem::exists(fs_path, ec);
         const bool is_file = exists && std::filesystem::is_regular_file(fs_path, ec);
@@ -141,8 +178,11 @@ void register_builtin_commands(App& app) {
         };
     });
 
-    app.async_command("rh:fs:listDir", [](std::string path) -> nlohmann::json {
+    app.async_command("rh:fs:listDir", [&app](std::string path) -> nlohmann::json {
         const std::filesystem::path fs_path(native::utf8_to_wide(path));
+        if (!app.fs_scope().is_allowed(fs_path)) {
+            throw std::runtime_error("Filesystem access denied: " + path);
+        }
         std::error_code ec;
         if (!std::filesystem::exists(fs_path, ec) || !std::filesystem::is_directory(fs_path, ec)) {
             throw std::runtime_error("Directory does not exist: " + path);
@@ -202,7 +242,7 @@ void register_builtin_commands(App& app) {
             {"embedded", app.resolver().prefer_embedded()},
             {"devtools", app.config().devtools},
             {"platform", "windows"},
-            {"version", "0.1.0"}
+            {"version", RHENIUM_VERSION}
         };
     });
 }

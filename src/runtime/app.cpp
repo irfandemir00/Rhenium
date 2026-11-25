@@ -27,12 +27,21 @@ bool should_prefer_embedded() {
 }
 
 std::filesystem::path get_executable_dir() {
-    wchar_t buf[MAX_PATH] = {};
-    const DWORD len = GetModuleFileNameW(nullptr, buf, MAX_PATH);
-    if (len > 0 && len < MAX_PATH) {
-        return std::filesystem::path(buf).parent_path();
+    std::wstring buf(MAX_PATH, L'\0');
+    while (true) {
+        const DWORD len = GetModuleFileNameW(nullptr, buf.data(), static_cast<DWORD>(buf.size()));
+        if (len == 0) {
+            return {};
+        }
+        if (len < buf.size() - 1) {
+            buf.resize(len);
+            return std::filesystem::path(buf).parent_path();
+        }
+        if (buf.size() >= 32768) {
+            return {};
+        }
+        buf.resize(buf.size() * 2);
     }
-    return {};
 }
 
 std::filesystem::path resolve_ui_directory(const Config& config) {
@@ -135,6 +144,14 @@ App::App(Config config)
       resolver_(resolve_ui_directory(config_), should_prefer_embedded()),
       window_(config_, resolver_),
       runtime_(std::make_unique<RuntimeImpl>()) {
+    for (const auto& root : config_.fs_allowed_roots) {
+        if (root == "*") {
+            fs_scope_.allow_all(true);
+        } else if (!root.empty()) {
+            fs_scope_.allow_directory(std::filesystem::path(native::utf8_to_wide(root)));
+        }
+    }
+
     detail::register_builtin_commands(*this);
 
     window_.set_on_message([this](const nlohmann::json& msg) {
@@ -209,13 +226,18 @@ void App::handle_internal_command(const std::string& cmd) {
         window_.start_drag();
     } else if (cmd == "__rh_window_toggle_maximize") {
         window_.toggle_maximize();
+    } else if (cmd.rfind("__rh_window_start_resize:", 0) == 0) {
+        window_.start_resize(cmd.substr(sizeof("__rh_window_start_resize:") - 1));
     }
 }
 
 void App::handle_frontend_message(const nlohmann::json& msg) {
     const std::string kind = msg.value("kind", "");
     if (kind == "internal") {
-        handle_internal_command(msg.value("cmd", ""));
+        const std::string cmd = msg.value("cmd", "");
+        dispatch([this, cmd]() {
+            handle_internal_command(cmd);
+        });
         return;
     }
 
@@ -240,13 +262,15 @@ void App::handle_frontend_message(const nlohmann::json& msg) {
             return;
         }
 
-        const IpcResult res = router_.invoke(cmd, args);
-        window_.post_json_message(nlohmann::json{
-            {"kind", "response"},
-            {"id", id},
-            {"ok", res.ok},
-            {"value", res.value},
-            {"error", res.error}
+        dispatch([this, id, cmd, args]() {
+            const IpcResult res = router_.invoke(cmd, args);
+            window_.post_json_message(nlohmann::json{
+                {"kind", "response"},
+                {"id", id},
+                {"ok", res.ok},
+                {"value", res.value},
+                {"error", res.error}
+            });
         });
     }
 }
@@ -255,14 +279,14 @@ int App::run() {
     const HRESULT com_hr = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
     const bool owns_com = SUCCEEDED(com_hr);
 
-    runtime_->start_workers();
-
     if (!window_.create()) {
         if (owns_com) {
             CoUninitialize();
         }
         return 1;
     }
+
+    runtime_->start_workers();
 
     if (!resolver_.prefer_embedded() && config_.hot_reload) {
         runtime_->watcher = std::make_unique<detail::FileWatcher>(

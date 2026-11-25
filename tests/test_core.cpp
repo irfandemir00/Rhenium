@@ -6,6 +6,8 @@
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <memory>
+#include <numeric>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -92,6 +94,27 @@ void test_config() {
         threw_bad_json = true;
     }
     CHECK(threw_bad_json);
+
+    const nlohmann::json clamped_json = {
+        {"width", 2000},
+        {"height", 50},
+        {"min_width", 900},
+        {"min_height", 600},
+        {"max_width", 800},
+        {"max_height", -10},
+        {"security", {
+            {"fs_allowed_roots", {"C:/temp", "D:/work"}},
+            {"max_read_file_bytes", 1024}
+        }}
+    };
+    const auto clamped = rhenium::Config::from_json(clamped_json);
+    CHECK(clamped.max_width == 800);
+    CHECK(clamped.max_height == 0);
+    CHECK(clamped.min_width == 800);
+    CHECK(clamped.width == 800);
+    CHECK(clamped.height == 600);
+    CHECK(clamped.fs_allowed_roots.size() == 2);
+    CHECK(clamped.max_read_file_bytes == 1024);
 }
 
 void test_security() {
@@ -120,13 +143,46 @@ void test_security() {
     CHECK(normalize_asset_path("/../secret.txt").empty());
     CHECK(normalize_asset_path("/%2e%2e/secret.txt").empty());
     CHECK(normalize_asset_path("/foo/%00bar").empty());
+    CHECK(normalize_asset_path("/C:/Windows/win.ini").empty());
+    CHECK(normalize_asset_path("/file.txt:stream").empty());
     CHECK(default_csp().find("script-src 'self' https://rhenium.localhost") != std::string::npos);
+
+    TempDirGuard scope_guard("rhenium_test_scope");
+    const fs::path foo_dir = scope_guard.dir / "foo";
+    const fs::path foobar_dir = scope_guard.dir / "foobar";
+    const fs::path single_file = scope_guard.dir / "single.txt";
+    fs::create_directories(foo_dir);
+    fs::create_directories(foobar_dir);
+
+    FsScope scope;
+    CHECK(!scope.is_allowed(foo_dir / "a.txt"));
+    CHECK(!scope.is_allowed(single_file));
+
+    scope.allow_file(single_file);
+    CHECK(scope.is_allowed(single_file));
+#ifdef _WIN32
+    CHECK(scope.is_allowed(scope_guard.dir / "SINGLE.TXT"));
+#endif
+    CHECK(!scope.is_allowed(scope_guard.dir / "other.txt"));
+
+    scope.allow_directory(foo_dir);
+    CHECK(scope.is_allowed(foo_dir / "a.txt"));
+    CHECK(scope.is_allowed(foo_dir / "sub" / "b.txt"));
+#ifdef _WIN32
+    CHECK(scope.is_allowed(scope_guard.dir / "FOO" / "A.TXT"));
+#endif
+    CHECK(!scope.is_allowed(foobar_dir / "a.txt"));
+
+    scope.allow_all(true);
+    CHECK(scope.is_allowed(foobar_dir / "a.txt"));
 }
 
 void test_assets() {
     CHECK(rhenium::mime_type_for_path("/index.html").starts_with("text/html"));
     CHECK(rhenium::mime_type_for_path("/styles.css").starts_with("text/css"));
     CHECK(rhenium::mime_type_for_path("/icon.svg") == "image/svg+xml");
+    CHECK(rhenium::mime_type_for_path("/app.wasm") == "application/wasm");
+    CHECK(rhenium::mime_type_for_path("/dir.v1/README") == "application/octet-stream");
     CHECK(rhenium::mime_type_for_path("/unknown.bin") == "application/octet-stream");
 
     auto& reg = rhenium::EmbeddedAssetRegistry::instance();
@@ -207,6 +263,36 @@ void test_ipc_router() {
 
     auto thrown = router.invoke("boom", nlohmann::json::array());
     CHECK(!thrown.ok && thrown.error.find("intentional failure") != std::string::npos);
+
+    int counter = 0;
+    router.register_command("inc", [counter]() mutable -> int {
+        return ++counter;
+    });
+    auto inc1 = router.invoke("inc", nlohmann::json::array());
+    auto inc2 = router.invoke("inc", nlohmann::json::array());
+    CHECK(inc1.ok && inc1.value == 1);
+    CHECK(inc2.ok && inc2.value == 2);
+
+    auto ptr = std::make_unique<int>(7);
+    router.register_command("move_only", [p = std::move(ptr)]() -> int {
+        return *p;
+    });
+    auto mo = router.invoke("move_only", nlohmann::json::array());
+    CHECK(mo.ok && mo.value == 7);
+
+    router.register_command("sum_vec", [](std::vector<int> vals) -> int {
+        return std::accumulate(vals.begin(), vals.end(), 0);
+    });
+    auto sv1 = router.invoke("sum_vec", nlohmann::json::array({1, 2, 3}));
+    auto sv2 = router.invoke("sum_vec", nlohmann::json::array({nlohmann::json::array({4, 5, 6})}));
+    CHECK(sv1.ok && sv1.value == 6);
+    CHECK(sv2.ok && sv2.value == 15);
+
+    router.register_command("json_echo", [](nlohmann::json val) -> nlohmann::json {
+        return val;
+    });
+    auto je = router.invoke("json_echo", nlohmann::json::array());
+    CHECK(je.ok && je.value.is_array() && je.value.empty());
 }
 
 }

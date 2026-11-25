@@ -1,0 +1,61 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512" role="img" aria-label="Rhenium Logo">
+  <defs>
+    <linearGradient id="bgGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#14161f"/>
+      <stop offset="100%" stop-color="#09090b"/>
+    </linearGradient>
+    <linearGradient id="borderGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#38bdf8" stop-opacity="0.45"/>
+      <stop offset="50%" stop-color="#94a3b8" stop-opacity="0.22"/>
+      <stop offset="100%" stop-color="#0c5cab" stop-opacity="0.5"/>
+    </linearGradient>
+    <linearGradient id="hexMain" x1="15%" y1="10%" x2="85%" y2="90%">
+      <stop offset="0%" stop-color="#38bdf8"/>
+      <stop offset="50%" stop-color="#2563eb"/>
+      <stop offset="100%" stop-color="#0c5cab"/>
+    </linearGradient>
+    <linearGradient id="hexFacetLight" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#bae6fd" stop-opacity="0.32"/>
+      <stop offset="100%" stop-color="#38bdf8" stop-opacity="0.04"/>
+    </linearGradient>
+    <linearGradient id="hexFacetDark" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#082f49" stop-opacity="0.1"/>
+      <stop offset="100%" stop-color="#020617" stop-opacity="0.42"/>
+    </linearGradient>
+    <linearGradient id="sheenGrad" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#ffffff" stop-opacity="0.28"/>
+      <stop offset="100%" stop-color="#ffffff" stop-opacity="0"/>
+    </linearGradient>
+    <linearGradient id="textGrad" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#ffffff"/>
+      <stop offset="100%" stop-color="#e2e8f0"/>
+    </linearGradient>
+    <radialGradient id="ambientGlow" cx="50%" cy="38%" r="52%">
+      <stop offset="0%" stop-color="#38bdf8" stop-opacity="0.22"/>
+      <stop offset="65%" stop-color="#0c5cab" stop-opacity="0.08"/>
+      <stop offset="100%" stop-color="#09090b" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+
+  <!-- Outer rounded squircle -->
+  <rect x="16" y="16" width="480" height="480" rx="108" fill="url(#bgGrad)"/>
+  <rect x="16" y="16" width="480" height="480" rx="108" fill="url(#ambientGlow)"/>
+  <rect x="17.5" y="17.5" width="477" height="477" rx="106.5" fill="none" stroke="url(#borderGrad)" stroke-width="3"/>
+
+  <!-- Geometric metallic hexagonal prism badge -->
+  <polygon points="256,74 414,165 414,347 256,438 98,347 98,165" fill="url(#hexMain)"/>
+
+  <!-- Faceted prism depth overlays -->
+  <polygon points="256,74 414,165 256,256 98,165" fill="url(#hexFacetLight)"/>
+  <polygon points="256,256 414,165 414,347 256,438" fill="url(#hexFacetDark)"/>
+  <polygon points="256,74 414,165 414,347 256,438 98,347 98,165" fill="none" stroke="#e0f2fe" stroke-opacity="0.4" stroke-width="2.5"/>
+
+  <!-- Inner precision frame -->
+  <polygon points="256,96 395,176 395,336 256,416 117,336 117,176" fill="#09090b" fill-opacity="0.32" stroke="#bae6fd" stroke-opacity="0.24" stroke-width="1.5"/>
+
+  <!-- Subtle top highlight sheen -->
+  <polygon points="256,78 408,166 364,191 256,129 148,191 104,166" fill="url(#sheenGrad)"/>
+
+  <!-- Bold "Rh" monogram -->
+  <text x="256" y="302" text-anchor="middle" fill="url(#textGrad)" font-family="'Segoe UI', 'Inter', system-ui, -apple-system, sans-serif" font-size="148" font-weight="800" letter-spacing="-4">Rh</text>
+</svg>

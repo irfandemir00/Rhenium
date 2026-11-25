@@ -10,6 +10,7 @@
 #include <shlwapi.h>
 #include <windowsx.h>
 
+#include <algorithm>
 #include <atomic>
 #include <mutex>
 #include <string>
@@ -32,16 +33,44 @@ void enable_per_monitor_dpi() {
     }
 }
 
-UINT get_window_dpi_safe(HWND hwnd) {
+UINT get_system_dpi_safe() {
     HMODULE user32 = GetModuleHandleW(L"user32.dll");
     if (user32) {
-        using GetDpiForWindowFn = UINT(WINAPI*)(HWND);
-        auto fn = reinterpret_cast<GetDpiForWindowFn>(GetProcAddress(user32, "GetDpiForWindow"));
+        using GetDpiForSystemFn = UINT(WINAPI*)();
+        auto fn = reinterpret_cast<GetDpiForSystemFn>(GetProcAddress(user32, "GetDpiForSystem"));
         if (fn) {
-            return fn(hwnd);
+            const UINT dpi = fn();
+            if (dpi > 0) return dpi;
         }
     }
     return 96;
+}
+
+UINT get_window_dpi_safe(HWND hwnd) {
+    if (hwnd) {
+        HMODULE user32 = GetModuleHandleW(L"user32.dll");
+        if (user32) {
+            using GetDpiForWindowFn = UINT(WINAPI*)(HWND);
+            auto fn = reinterpret_cast<GetDpiForWindowFn>(GetProcAddress(user32, "GetDpiForWindow"));
+            if (fn) {
+                const UINT dpi = fn(hwnd);
+                if (dpi > 0) return dpi;
+            }
+        }
+    }
+    return get_system_dpi_safe();
+}
+
+void adjust_window_rect_for_dpi(RECT* rect, DWORD style, BOOL menu, DWORD ex_style, UINT dpi) {
+    HMODULE user32 = GetModuleHandleW(L"user32.dll");
+    if (user32) {
+        using AdjustForDpiFn = BOOL(WINAPI*)(LPRECT, DWORD, BOOL, DWORD, UINT);
+        auto fn = reinterpret_cast<AdjustForDpiFn>(GetProcAddress(user32, "AdjustWindowRectExForDpi"));
+        if (fn && fn(rect, style, menu, ex_style, dpi)) {
+            return;
+        }
+    }
+    AdjustWindowRectEx(rect, style, menu, ex_style);
 }
 
 void apply_dark_titlebar(HWND hwnd, bool enabled) {
@@ -74,10 +103,10 @@ std::filesystem::path build_user_data_dir(std::string_view app_id) {
 
 }
 
-struct Window::Impl {
+struct Window::Impl : public std::enable_shared_from_this<Window::Impl> {
     Config config;
     const AssetResolver& resolver;
-    HWND hwnd = nullptr;
+    std::atomic<HWND> hwnd{nullptr};
 
     detail::ComPtr<ICoreWebView2Environment> env;
     detail::ComPtr<ICoreWebView2Controller> controller;
@@ -88,15 +117,19 @@ struct Window::Impl {
     DispatchCallback on_dispatch;
 
     std::atomic<bool> ready{false};
+    std::atomic<bool> destroyed{false};
+    std::atomic<bool> on_ready_fired{false};
+    bool last_maximized = false;
     std::mutex pending_mutex;
     std::vector<nlohmann::json> pending_messages;
 
     Impl(const Config& cfg, const AssetResolver& res) : config(cfg), resolver(res) {}
 
     void resize_webview() {
-        if (!controller || !hwnd) return;
+        HWND h = hwnd.load();
+        if (!controller || !h) return;
         RECT bounds{};
-        GetClientRect(hwnd, &bounds);
+        GetClientRect(h, &bounds);
         controller->put_Bounds(bounds);
     }
 
@@ -112,6 +145,9 @@ struct Window::Impl {
     }
 
     void post_json(const nlohmann::json& msg) {
+        if (destroyed.load()) {
+            return;
+        }
         if (!ready.load() || !webview) {
             std::lock_guard<std::mutex> lock(pending_mutex);
             pending_messages.push_back(msg);
@@ -121,15 +157,24 @@ struct Window::Impl {
         webview->PostWebMessageAsJson(wide.c_str());
     }
 
+    void emit_event(std::string_view event, const nlohmann::json& payload) {
+        post_json(nlohmann::json{
+            {"kind", "event"},
+            {"name", event},
+            {"payload", payload}
+        });
+    }
+
     void init_webview2() {
+        HWND h = hwnd.load();
         auto create_env = detail::load_webview2_create_env();
         if (!create_env) {
             native::message_box(
-                hwnd,
+                h,
                 "Rhenium — WebView2 Error",
                 "Could not load WebView2Loader.dll or Microsoft Edge WebView2 Runtime.",
                 native::MessageBoxType::Error);
-            DestroyWindow(hwnd);
+            if (h) DestroyWindow(h);
             return;
         }
 
@@ -137,52 +182,77 @@ struct Window::Impl {
         std::error_code ec;
         std::filesystem::create_directories(user_data, ec);
 
+        std::weak_ptr<Impl> weak = weak_from_this();
         auto* env_handler = detail::make_com_handler<ICoreWebView2CreateCoreWebView2EnvironmentCompletedHandler>(
             IID_ICoreWebView2CreateCoreWebView2EnvironmentCompletedHandler,
-            [this](HRESULT hr, ICoreWebView2Environment* created_env) -> HRESULT {
-                if (FAILED(hr) || !created_env) {
+            [weak](HRESULT hr, ICoreWebView2Environment* created_env) -> HRESULT {
+                auto self = weak.lock();
+                if (!self || self->destroyed.load()) {
+                    return S_OK;
+                }
+                HWND cur_hwnd = self->hwnd.load();
+                if (FAILED(hr) || !created_env || !cur_hwnd) {
                     native::message_box(
-                        hwnd,
+                        cur_hwnd,
                         "Rhenium — WebView2 Error",
                         "Failed to create WebView2 environment. Ensure Microsoft Edge WebView2 Runtime is installed.",
                         native::MessageBoxType::Error);
-                    DestroyWindow(hwnd);
+                    if (cur_hwnd) DestroyWindow(cur_hwnd);
                     return hr;
                 }
                 created_env->AddRef();
-                env.attach(created_env);
+                self->env.attach(created_env);
 
                 auto* ctrl_handler = detail::make_com_handler<ICoreWebView2CreateCoreWebView2ControllerCompletedHandler>(
                     IID_ICoreWebView2CreateCoreWebView2ControllerCompletedHandler,
-                    [this](HRESULT ctrl_hr, ICoreWebView2Controller* created_ctrl) -> HRESULT {
-                        if (FAILED(ctrl_hr) || !created_ctrl) {
-                            return ctrl_hr;
+                    [weak](HRESULT ctrl_hr, ICoreWebView2Controller* created_ctrl) -> HRESULT {
+                        auto self_ctrl = weak.lock();
+                        if (!self_ctrl || self_ctrl->destroyed.load()) {
+                            return S_OK;
+                        }
+                        HWND h_ctrl = self_ctrl->hwnd.load();
+                        if (FAILED(ctrl_hr) || !created_ctrl || !h_ctrl) {
+                            native::message_box(
+                                h_ctrl,
+                                "Rhenium — WebView2 Error",
+                                "Failed to create WebView2 controller.",
+                                native::MessageBoxType::Error);
+                            if (h_ctrl) DestroyWindow(h_ctrl);
+                            return FAILED(ctrl_hr) ? ctrl_hr : E_FAIL;
                         }
                         created_ctrl->AddRef();
-                        controller.attach(created_ctrl);
+                        self_ctrl->controller.attach(created_ctrl);
 
                         ICoreWebView2* raw_wv = nullptr;
-                        if (FAILED(controller->get_CoreWebView2(&raw_wv)) || !raw_wv) {
+                        if (FAILED(self_ctrl->controller->get_CoreWebView2(&raw_wv)) || !raw_wv) {
+                            native::message_box(
+                                h_ctrl,
+                                "Rhenium — WebView2 Error",
+                                "Failed to obtain CoreWebView2 instance.",
+                                native::MessageBoxType::Error);
+                            DestroyWindow(h_ctrl);
                             return E_FAIL;
                         }
-                        webview.attach(raw_wv);
+                        self_ctrl->webview.attach(raw_wv);
 
-                        configure_webview();
-                        resize_webview();
+                        self_ctrl->configure_webview();
+                        self_ctrl->resize_webview();
 
-                        ready.store(true);
-                        flush_pending_messages();
-                        if (on_ready) {
-                            on_ready();
-                        }
-
-                        const std::string entry_url = std::string(security::kAppOrigin) + config.start_path;
-                        webview->Navigate(native::utf8_to_wide(entry_url).c_str());
+                        const std::string entry_url = std::string(security::kAppOrigin) + self_ctrl->config.start_path;
+                        self_ctrl->webview->Navigate(native::utf8_to_wide(entry_url).c_str());
                         return S_OK;
                     });
 
-                const HRESULT c_hr = env->CreateCoreWebView2Controller(hwnd, ctrl_handler);
+                const HRESULT c_hr = self->env->CreateCoreWebView2Controller(cur_hwnd, ctrl_handler);
                 ctrl_handler->Release();
+                if (FAILED(c_hr)) {
+                    native::message_box(
+                        cur_hwnd,
+                        "Rhenium — WebView2 Error",
+                        "CreateCoreWebView2Controller failed.",
+                        native::MessageBoxType::Error);
+                    DestroyWindow(cur_hwnd);
+                }
                 return c_hr;
             });
 
@@ -190,10 +260,11 @@ struct Window::Impl {
         env_handler->Release();
         if (FAILED(e_hr)) {
             native::message_box(
-                hwnd,
+                h,
                 "Rhenium — WebView2 Error",
                 "CreateCoreWebView2EnvironmentWithOptions failed.",
                 native::MessageBoxType::Error);
+            if (h) DestroyWindow(h);
         }
     }
 
@@ -211,17 +282,23 @@ struct Window::Impl {
             }
         }
 
-        const std::wstring script_w = native::utf8_to_wide(get_runtime_script());
+        const std::wstring script_w = native::utf8_to_wide(
+            build_runtime_script(config.frameless, config.resizable));
         webview->AddScriptToExecuteOnDocumentCreated(script_w.c_str(), nullptr);
 
         webview->AddWebResourceRequestedFilter(
             L"https://rhenium.localhost/*", COREWEBVIEW2_WEB_RESOURCE_CONTEXT_ALL);
 
         EventRegistrationToken token{};
+        std::weak_ptr<Impl> weak = weak_from_this();
 
         auto* res_handler = detail::make_com_handler<ICoreWebView2WebResourceRequestedEventHandler>(
             IID_ICoreWebView2WebResourceRequestedEventHandler,
-            [this](ICoreWebView2*, ICoreWebView2WebResourceRequestedEventArgs* args) -> HRESULT {
+            [weak](ICoreWebView2*, ICoreWebView2WebResourceRequestedEventArgs* args) -> HRESULT {
+                auto self = weak.lock();
+                if (!self || self->destroyed.load() || !self->env) {
+                    return S_OK;
+                }
                 detail::ComPtr<ICoreWebView2WebResourceRequest> req;
                 if (FAILED(args->get_Request(req.put())) || !req) {
                     return S_OK;
@@ -237,13 +314,13 @@ struct Window::Impl {
                     return S_OK;
                 }
 
-                auto asset = resolver.resolve(uri);
+                auto asset = self->resolver.resolve(uri);
                 detail::ComPtr<ICoreWebView2WebResourceResponse> response;
                 if (!asset.has_value()) {
                     const char* not_found = "404 Not Found";
                     IStream* stream = SHCreateMemStream(
                         reinterpret_cast<const BYTE*>(not_found), static_cast<UINT>(strlen(not_found)));
-                    env->CreateWebResourceResponse(
+                    self->env->CreateWebResourceResponse(
                         stream, 404, L"Not Found", L"Content-Type: text/plain; charset=utf-8\r\n",
                         response.put());
                     if (stream) stream->Release();
@@ -255,8 +332,8 @@ struct Window::Impl {
                     asset->bytes.empty() ? nullptr : asset->bytes.data(),
                     static_cast<UINT>(asset->bytes.size()));
                 const bool is_html = asset->mime.starts_with("text/html");
-                const std::string headers = security::format_response_headers(asset->mime, config.csp, is_html);
-                env->CreateWebResourceResponse(
+                const std::string headers = security::format_response_headers(asset->mime, self->config.csp, is_html);
+                self->env->CreateWebResourceResponse(
                     stream, 200, L"OK", native::utf8_to_wide(headers).c_str(), response.put());
                 if (stream) stream->Release();
                 if (response) args->put_Response(response.get());
@@ -267,7 +344,11 @@ struct Window::Impl {
 
         auto* msg_handler = detail::make_com_handler<ICoreWebView2WebMessageReceivedEventHandler>(
             IID_ICoreWebView2WebMessageReceivedEventHandler,
-            [this](ICoreWebView2*, ICoreWebView2WebMessageReceivedEventArgs* args) -> HRESULT {
+            [weak](ICoreWebView2*, ICoreWebView2WebMessageReceivedEventArgs* args) -> HRESULT {
+                auto self = weak.lock();
+                if (!self || self->destroyed.load()) {
+                    return S_OK;
+                }
                 LPWSTR raw_source = nullptr;
                 if (FAILED(args->get_Source(&raw_source)) || !raw_source) {
                     return S_OK;
@@ -287,8 +368,8 @@ struct Window::Impl {
 
                 try {
                     auto parsed = nlohmann::json::parse(json_str);
-                    if (on_message && parsed.is_object()) {
-                        on_message(parsed);
+                    if (self->on_message && parsed.is_object()) {
+                        self->on_message(parsed);
                     }
                 } catch (...) {
 
@@ -297,6 +378,40 @@ struct Window::Impl {
             });
         webview->add_WebMessageReceived(msg_handler, &token);
         msg_handler->Release();
+
+        auto* nav_completed_handler = detail::make_com_handler<ICoreWebView2NavigationCompletedEventHandler>(
+            IID_ICoreWebView2NavigationCompletedEventHandler,
+            [weak](ICoreWebView2* sender, ICoreWebView2NavigationCompletedEventArgs*) -> HRESULT {
+                auto self = weak.lock();
+                if (!self || self->destroyed.load()) {
+                    return S_OK;
+                }
+                LPWSTR raw_source = nullptr;
+                std::string source;
+                if (sender && SUCCEEDED(sender->get_Source(&raw_source)) && raw_source) {
+                    source = native::wide_to_utf8(raw_source);
+                    CoTaskMemFree(raw_source);
+                }
+                if (!security::is_trusted_origin(source)) {
+                    return S_OK;
+                }
+
+                self->ready.store(true);
+                self->flush_pending_messages();
+
+                HWND h = self->hwnd.load();
+                if (h) {
+                    self->last_maximized = (IsZoomed(h) != FALSE);
+                    self->emit_event("rhenium:maximized", nlohmann::json(self->last_maximized));
+                }
+
+                if (!self->on_ready_fired.exchange(true) && self->on_ready) {
+                    self->on_ready();
+                }
+                return S_OK;
+            });
+        webview->add_NavigationCompleted(nav_completed_handler, &token);
+        nav_completed_handler->Release();
 
         auto* nav_handler = detail::make_com_handler<ICoreWebView2NavigationStartingEventHandler>(
             IID_ICoreWebView2NavigationStartingEventHandler,
@@ -337,15 +452,23 @@ struct Window::Impl {
         new_win_handler->Release();
     }
 
-    LRESULT handle_message(UINT msg, WPARAM wparam, LPARAM lparam) {
+    LRESULT handle_message(HWND h, UINT msg, WPARAM wparam, LPARAM lparam) {
         switch (msg) {
-            case WM_SIZE:
+            case WM_SIZE: {
                 resize_webview();
+                const bool now_max = (IsZoomed(h) != FALSE);
+                if (now_max != last_maximized) {
+                    last_maximized = now_max;
+                    if (ready.load()) {
+                        emit_event("rhenium:maximized", nlohmann::json(now_max));
+                    }
+                }
                 return 0;
+            }
 
             case WM_GETMINMAXINFO: {
                 auto* mmi = reinterpret_cast<MINMAXINFO*>(lparam);
-                const UINT dpi = get_window_dpi_safe(hwnd);
+                const UINT dpi = get_window_dpi_safe(h);
                 const double scale = dpi > 0 ? (static_cast<double>(dpi) / 96.0) : 1.0;
                 if (config.min_width > 0) {
                     mmi->ptMinTrackSize.x = static_cast<LONG>(config.min_width * scale);
@@ -362,11 +485,25 @@ struct Window::Impl {
                 return 0;
             }
 
+            case WM_DPICHANGED: {
+                const auto* suggested = reinterpret_cast<const RECT*>(lparam);
+                if (suggested) {
+                    SetWindowPos(
+                        h, nullptr,
+                        suggested->left, suggested->top,
+                        suggested->right - suggested->left,
+                        suggested->bottom - suggested->top,
+                        SWP_NOZORDER | SWP_NOACTIVATE);
+                    resize_webview();
+                }
+                return 0;
+            }
+
             case WM_NCCALCSIZE: {
                 if (config.frameless && wparam == TRUE) {
-                    if (IsZoomed(hwnd)) {
+                    if (IsZoomed(h)) {
                         auto* params = reinterpret_cast<NCCALCSIZE_PARAMS*>(lparam);
-                        HMONITOR mon = MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST);
+                        HMONITOR mon = MonitorFromWindow(h, MONITOR_DEFAULTTONEAREST);
                         MONITORINFO mi{};
                         mi.cbSize = sizeof(mi);
                         if (GetMonitorInfoW(mon, &mi)) {
@@ -379,17 +516,18 @@ struct Window::Impl {
             }
 
             case WM_NCHITTEST: {
-                if (config.frameless && config.resizable && !IsZoomed(hwnd)) {
+                if (config.frameless && config.resizable && !IsZoomed(h)) {
                     RECT rc{};
-                    GetWindowRect(hwnd, &rc);
+                    GetWindowRect(h, &rc);
                     const int x = GET_X_LPARAM(lparam);
                     const int y = GET_Y_LPARAM(lparam);
-                    constexpr int kBorder = 6;
+                    const UINT dpi = get_window_dpi_safe(h);
+                    const int border = (std::max)(6, static_cast<int>(6.0 * dpi / 96.0));
 
-                    const bool left = x >= rc.left && x < rc.left + kBorder;
-                    const bool right = x <= rc.right && x > rc.right - kBorder;
-                    const bool top = y >= rc.top && y < rc.top + kBorder;
-                    const bool bottom = y <= rc.bottom && y > rc.bottom - kBorder;
+                    const bool left = x >= rc.left && x < rc.left + border;
+                    const bool right = x <= rc.right && x > rc.right - border;
+                    const bool top = y >= rc.top && y < rc.top + border;
+                    const bool bottom = y <= rc.bottom && y > rc.bottom - border;
 
                     if (top && left) return HTTOPLEFT;
                     if (top && right) return HTTOPRIGHT;
@@ -410,7 +548,10 @@ struct Window::Impl {
                 return 0;
 
             case WM_DESTROY:
+                destroyed.store(true);
                 ready.store(false);
+                SetWindowLongPtrW(h, GWLP_USERDATA, 0);
+                hwnd.store(nullptr);
                 if (controller) {
                     controller->Close();
                 }
@@ -423,7 +564,7 @@ struct Window::Impl {
             default:
                 break;
         }
-        return DefWindowProcW(hwnd, msg, wparam, lparam);
+        return DefWindowProcW(h, msg, wparam, lparam);
     }
 
     static LRESULT CALLBACK wnd_proc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam) {
@@ -432,19 +573,19 @@ struct Window::Impl {
             auto* cs = reinterpret_cast<CREATESTRUCTW*>(lparam);
             self = static_cast<Impl*>(cs->lpCreateParams);
             SetWindowLongPtrW(hwnd, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(self));
-            self->hwnd = hwnd;
+            self->hwnd.store(hwnd);
         } else {
             self = reinterpret_cast<Impl*>(GetWindowLongPtrW(hwnd, GWLP_USERDATA));
         }
         if (self) {
-            return self->handle_message(msg, wparam, lparam);
+            return self->handle_message(hwnd, msg, wparam, lparam);
         }
         return DefWindowProcW(hwnd, msg, wparam, lparam);
     }
 };
 
 Window::Window(const Config& config, const AssetResolver& resolver)
-    : impl_(std::make_unique<Impl>(config, resolver)) {}
+    : impl_(std::make_shared<Impl>(config, resolver)) {}
 
 Window::~Window() = default;
 
@@ -455,17 +596,25 @@ void Window::set_dispatch_handler(DispatchCallback cb) { impl_->on_dispatch = st
 bool Window::create() {
     enable_per_monitor_dpi();
 
+    static std::once_flag class_once;
+    static ATOM class_atom = 0;
     const HINSTANCE hinst = GetModuleHandleW(nullptr);
-    WNDCLASSEXW wc{};
-    wc.cbSize = sizeof(wc);
-    wc.style = CS_HREDRAW | CS_VREDRAW;
-    wc.lpfnWndProc = &Impl::wnd_proc;
-    wc.hInstance = hinst;
-    wc.hCursor = LoadCursorW(nullptr, IDC_ARROW);
-    wc.hIcon = LoadIconW(nullptr, IDI_APPLICATION);
-    wc.hbrBackground = CreateSolidBrush(RGB(15, 17, 23));
-    wc.lpszClassName = kWindowClassName;
-    RegisterClassExW(&wc);
+    std::call_once(class_once, [hinst]() {
+        static HBRUSH bg_brush = CreateSolidBrush(RGB(15, 17, 23));
+        WNDCLASSEXW wc{};
+        wc.cbSize = sizeof(wc);
+        wc.style = CS_HREDRAW | CS_VREDRAW;
+        wc.lpfnWndProc = &Impl::wnd_proc;
+        wc.hInstance = hinst;
+        wc.hCursor = LoadCursorW(nullptr, IDC_ARROW);
+        wc.hIcon = LoadIconW(nullptr, IDI_APPLICATION);
+        wc.hbrBackground = bg_brush;
+        wc.lpszClassName = kWindowClassName;
+        class_atom = RegisterClassExW(&wc);
+    });
+    if (class_atom == 0) {
+        return false;
+    }
 
     DWORD style = 0;
     if (impl_->config.frameless) {
@@ -480,9 +629,15 @@ bool Window::create() {
         }
     }
 
-    RECT rect{0, 0, impl_->config.width, impl_->config.height};
+    const UINT initial_dpi = get_system_dpi_safe();
+    const double initial_scale = static_cast<double>(initial_dpi) / 96.0;
+    RECT rect{
+        0, 0,
+        static_cast<LONG>(impl_->config.width * initial_scale),
+        static_cast<LONG>(impl_->config.height * initial_scale)
+    };
     if (!impl_->config.frameless) {
-        AdjustWindowRectEx(&rect, style, FALSE, 0);
+        adjust_window_rect_for_dpi(&rect, style, FALSE, 0, initial_dpi);
     }
 
     const int win_w = rect.right - rect.left;
@@ -530,46 +685,71 @@ int Window::run_event_loop() {
 }
 
 void Window::post_dispatch_signal() {
-    if (impl_->hwnd) {
-        PostMessageW(impl_->hwnd, WM_RHENIUM_DISPATCH, 0, 0);
+    HWND h = impl_->hwnd.load();
+    if (h) {
+        PostMessageW(h, WM_RHENIUM_DISPATCH, 0, 0);
     }
 }
 
 void Window::set_title(std::string_view title) {
-    if (impl_->hwnd) {
-        SetWindowTextW(impl_->hwnd, native::utf8_to_wide(title).c_str());
+    HWND h = impl_->hwnd.load();
+    if (h) {
+        SetWindowTextW(h, native::utf8_to_wide(title).c_str());
     }
 }
 
 void Window::minimize() {
-    if (impl_->hwnd) {
-        ShowWindow(impl_->hwnd, SW_MINIMIZE);
+    HWND h = impl_->hwnd.load();
+    if (h) {
+        ShowWindow(h, SW_MINIMIZE);
     }
 }
 
 void Window::toggle_maximize() {
-    if (!impl_->hwnd) return;
-    if (IsZoomed(impl_->hwnd)) {
-        ShowWindow(impl_->hwnd, SW_RESTORE);
+    HWND h = impl_->hwnd.load();
+    if (!h) return;
+    if (IsZoomed(h)) {
+        ShowWindow(h, SW_RESTORE);
     } else {
-        ShowWindow(impl_->hwnd, SW_MAXIMIZE);
+        ShowWindow(h, SW_MAXIMIZE);
     }
 }
 
 bool Window::is_maximized() const {
-    return impl_->hwnd && IsZoomed(impl_->hwnd) != FALSE;
+    HWND h = impl_->hwnd.load();
+    return h && IsZoomed(h) != FALSE;
 }
 
 void Window::close() {
-    if (impl_->hwnd) {
-        PostMessageW(impl_->hwnd, WM_CLOSE, 0, 0);
+    HWND h = impl_->hwnd.load();
+    if (h) {
+        PostMessageW(h, WM_CLOSE, 0, 0);
     }
 }
 
 void Window::start_drag() {
-    if (!impl_->hwnd) return;
+    HWND h = impl_->hwnd.load();
+    if (!h) return;
     ReleaseCapture();
-    SendMessageW(impl_->hwnd, WM_SYSCOMMAND, SC_MOVE | HTCAPTION, 0);
+    PostMessageW(h, WM_SYSCOMMAND, SC_MOVE | HTCAPTION, 0);
+}
+
+void Window::start_resize(std::string_view edge) {
+    HWND h = impl_->hwnd.load();
+    if (!h || IsZoomed(h) || !impl_->config.frameless || !impl_->config.resizable) return;
+    WPARAM ht = 0;
+    if (edge == "w") ht = HTLEFT;
+    else if (edge == "e") ht = HTRIGHT;
+    else if (edge == "n") ht = HTTOP;
+    else if (edge == "s") ht = HTBOTTOM;
+    else if (edge == "nw") ht = HTTOPLEFT;
+    else if (edge == "ne") ht = HTTOPRIGHT;
+    else if (edge == "sw") ht = HTBOTTOMLEFT;
+    else if (edge == "se") ht = HTBOTTOMRIGHT;
+    if (ht != 0) {
+        ReleaseCapture();
+        SendMessageW(h, WM_NCLBUTTONDOWN, ht, 0);
+    }
 }
 
 void Window::open_devtools() {
@@ -585,7 +765,7 @@ void Window::reload() {
 }
 
 void* Window::native_handle() const {
-    return impl_->hwnd;
+    return impl_->hwnd.load();
 }
 
 bool Window::is_ready() const {
@@ -597,11 +777,7 @@ void Window::post_json_message(const nlohmann::json& msg) {
 }
 
 void Window::emit(std::string_view event, const nlohmann::json& payload) {
-    post_json_message(nlohmann::json{
-        {"kind", "event"},
-        {"name", event},
-        {"payload", payload}
-    });
+    impl_->emit_event(event, payload);
 }
 
 }
