@@ -183,7 +183,7 @@ tests/                       # Unit tests (rhenium_core_tests)
 ## 🤝 Contributing
 
 Rhenium is growing in Beta and contributions are always welcome!
-See [`Contributors.md`](Contributors.md) for the contributor roster, development setup, and guidelines on opening issues or pull requests.
+Read [`CONTRIBUTING.md`](CONTRIBUTING.md) for development setup and pull request guidelines, and check [`Contributors.md`](Contributors.md) for the contributor roster.
 
 ---
 
