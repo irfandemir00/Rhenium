@@ -13,8 +13,6 @@ jobs:
   release-windows:
     name: Package Windows x64 Release
     runs-on: windows-latest
-    env:
-      RHENIUM_WEBVIEW2_CACHE_DIR: ${{ runner.temp }}/rhenium-webview2-cache
 
     steps:
       - name: Checkout repository
@@ -34,7 +32,7 @@ jobs:
       - name: Configure & Build (Release Embedded)
         shell: pwsh
         run: |
-          cmake -B build-release -G Ninja -DCMAKE_BUILD_TYPE=Release -DRHENIUM_EMBED_ASSETS=ON
+          cmake -B build-release -G Ninja -DCMAKE_BUILD_TYPE=Release -DRHENIUM_EMBED_ASSETS=ON "-DRHENIUM_WEBVIEW2_CACHE_DIR=$env:RUNNER_TEMP/rhenium-webview2-cache"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           cmake --build build-release
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
