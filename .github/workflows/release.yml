@@ -13,10 +13,18 @@ jobs:
   release-windows:
     name: Package Windows x64 Release
     runs-on: windows-latest
+    env:
+      RHENIUM_WEBVIEW2_CACHE_DIR: ${{ runner.temp }}/rhenium-webview2-cache
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+
+      - name: Cache WebView2 SDK
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/rhenium-webview2-cache
+          key: ${{ runner.os }}-webview2-${{ hashFiles('cmake/FetchWebView2.cmake') }}
 
       - name: Setup MSVC x64 environment
         uses: ilammy/msvc-dev-cmd@v1
@@ -27,8 +35,11 @@ jobs:
         shell: pwsh
         run: |
           cmake -B build-release -G Ninja -DCMAKE_BUILD_TYPE=Release -DRHENIUM_EMBED_ASSETS=ON
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           cmake --build build-release
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           ctest --test-dir build-release --output-on-failure
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Package Release Archives
         shell: pwsh

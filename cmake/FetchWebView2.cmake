@@ -19,24 +19,65 @@ elseif(CMAKE_SIZEOF_VOID_P EQUAL 4)
     set(_webview2_arch "x86")
 endif()
 
-set(_webview2_root "${CMAKE_BINARY_DIR}/_deps/webview2")
-set(_webview2_nupkg "${CMAKE_BINARY_DIR}/_deps/microsoft.web.webview2.${RHENIUM_WEBVIEW2_VERSION}.nupkg")
+if(DEFINED ENV{RHENIUM_WEBVIEW2_CACHE_DIR} AND NOT "$ENV{RHENIUM_WEBVIEW2_CACHE_DIR}" STREQUAL "")
+    set(_rhenium_default_wv2_cache "$ENV{RHENIUM_WEBVIEW2_CACHE_DIR}")
+else()
+    set(_rhenium_default_wv2_cache "${CMAKE_BINARY_DIR}/_deps")
+endif()
+set(RHENIUM_WEBVIEW2_CACHE_DIR "${_rhenium_default_wv2_cache}" CACHE PATH "Directory to cache downloaded WebView2 SDK")
+file(TO_CMAKE_PATH "${RHENIUM_WEBVIEW2_CACHE_DIR}" _webview2_cache_dir)
+
+set(_webview2_root "${_webview2_cache_dir}/webview2")
+set(_webview2_nupkg "${_webview2_cache_dir}/microsoft.web.webview2.${RHENIUM_WEBVIEW2_VERSION}.nupkg")
 set(_webview2_header "${_webview2_root}/build/native/include/WebView2.h")
 set(_webview2_loader "${_webview2_root}/build/native/${_webview2_arch}/WebView2Loader.dll")
 
 if(NOT EXISTS "${_webview2_header}" OR NOT EXISTS "${_webview2_loader}")
-    file(MAKE_DIRECTORY "${CMAKE_BINARY_DIR}/_deps")
+    file(MAKE_DIRECTORY "${_webview2_cache_dir}")
     if(NOT EXISTS "${_webview2_nupkg}")
-        message(STATUS "Rhenium: Downloading Microsoft.Web.WebView2 ${RHENIUM_WEBVIEW2_VERSION}...")
-        file(DOWNLOAD "${RHENIUM_WEBVIEW2_URL}" "${_webview2_nupkg}"
-            SHOW_PROGRESS
-            STATUS _dl_status
-            TLS_VERIFY ON
-        )
-        list(GET _dl_status 0 _dl_code)
-        if(NOT _dl_code EQUAL 0)
+        set(_dl_ok FALSE)
+        set(_dl_code "")
+        set(_dl_msg "")
+        foreach(_attempt RANGE 1 4)
+            message(STATUS "Rhenium: Downloading Microsoft.Web.WebView2 ${RHENIUM_WEBVIEW2_VERSION} (attempt ${_attempt}/4)...")
+            file(DOWNLOAD "${RHENIUM_WEBVIEW2_URL}" "${_webview2_nupkg}"
+                SHOW_PROGRESS
+                STATUS _dl_status
+                TLS_VERIFY ON
+                INACTIVITY_TIMEOUT 30
+                TIMEOUT 120
+            )
+            list(GET _dl_status 0 _dl_code)
+            if(_dl_code EQUAL 0)
+                set(_dl_ok TRUE)
+                break()
+            endif()
             list(GET _dl_status 1 _dl_msg)
             file(REMOVE "${_webview2_nupkg}")
+            message(WARNING "WebView2 download attempt ${_attempt} failed (${_dl_code}): ${_dl_msg}")
+            if(_attempt LESS 4)
+                execute_process(COMMAND "${CMAKE_COMMAND}" -E sleep 2)
+            endif()
+        endforeach()
+
+        if(NOT _dl_ok)
+            find_program(_rhenium_curl_exe curl)
+            if(_rhenium_curl_exe)
+                message(STATUS "Rhenium: Falling back to curl for WebView2 download...")
+                execute_process(
+                    COMMAND "${_rhenium_curl_exe}" -fsSL --retry 3 --retry-delay 2
+                        -o "${_webview2_nupkg}" "${RHENIUM_WEBVIEW2_URL}"
+                    RESULT_VARIABLE _curl_rc
+                )
+                if(_curl_rc EQUAL 0 AND EXISTS "${_webview2_nupkg}")
+                    set(_dl_ok TRUE)
+                else()
+                    file(REMOVE "${_webview2_nupkg}")
+                endif()
+            endif()
+        endif()
+
+        if(NOT _dl_ok)
             message(FATAL_ERROR "Failed to download Microsoft.Web.WebView2 (${_dl_code}): ${_dl_msg}")
         endif()
     endif()
