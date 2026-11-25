@@ -7,6 +7,7 @@
 **Lightweight C++20 Win32 + WebView2 Desktop Framework — Zero Node.js Required**
 
 [![Status: Beta](https://img.shields.io/badge/status-beta%20(v0.1.0)-f59e0b?style=for-the-badge)](https://github.com/irfandemir00/Rhenium)
+[![CI](https://img.shields.io/github/actions/workflow/status/irfandemir00/Rhenium/ci.yml?branch=main&style=for-the-badge&label=CI)](https://github.com/irfandemir00/Rhenium/actions/workflows/ci.yml)
 [![Platform](https://img.shields.io/badge/platform-Windows%2010%2F11-0078D6?style=for-the-badge&logo=windows)](https://github.com/irfandemir00/Rhenium)
 [![C++20](https://img.shields.io/badge/C%2B%2B-20-00599C?style=for-the-badge&logo=cplusplus)](https://github.com/irfandemir00/Rhenium)
 [![WebView2](https://img.shields.io/badge/runtime-Edge%20WebView2-0ea5e9?style=for-the-badge)](https://developer.microsoft.com/en-us/microsoft-edge/webview2/)

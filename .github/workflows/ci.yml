@@ -1,0 +1,90 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-and-test:
+    name: Windows x64 (MSVC + Ninja)
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup MSVC x64 environment
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+
+      - name: Configure & Build (Debug)
+        shell: pwsh
+        run: |
+          cmake -B build-debug -G Ninja -DCMAKE_BUILD_TYPE=Debug
+          cmake --build build-debug
+
+      - name: Run Unit Tests (Debug)
+        shell: pwsh
+        run: ctest --test-dir build-debug --output-on-failure
+
+      - name: Verify Showcase Assets (Debug)
+        shell: pwsh
+        run: |
+          .\build-debug\examples\showcase\rhenium_showcase.exe --check-assets
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Configure & Build (Release Embedded)
+        shell: pwsh
+        run: |
+          cmake -B build-release -G Ninja -DCMAKE_BUILD_TYPE=Release -DRHENIUM_EMBED_ASSETS=ON
+          cmake --build build-release
+
+      - name: Run Unit Tests (Release)
+        shell: pwsh
+        run: ctest --test-dir build-release --output-on-failure
+
+      - name: Verify Showcase Embedded Assets (Release)
+        shell: pwsh
+        run: |
+          .\build-release\examples\showcase\rhenium_showcase.exe --check-embedded
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: CLI Smoke Test (init)
+        shell: pwsh
+        run: |
+          $smoke = Join-Path $env:RUNNER_TEMP "rhenium_cli_smoke"
+          if (Test-Path $smoke) { Remove-Item -Recurse -Force $smoke }
+          New-Item -ItemType Directory -Path $smoke | Out-Null
+          .\build-release\tools\rhenium_cli\rhenium.exe init "Smoke Demo" --dir $smoke
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $proj = Join-Path $smoke "Smoke Demo"
+          foreach ($rel in @("CMakeLists.txt", "rhenium.json", "src\main.cpp", "ui\index.html", "ui\app.js")) {
+            if (-not (Test-Path (Join-Path $proj $rel))) {
+              Write-Error "Missing scaffolded file: $rel"
+              exit 1
+            }
+          }
+
+      - name: Stage Release Artifacts
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path "artifacts\showcase", "artifacts\cli" | Out-Null
+          Copy-Item "build-release\examples\showcase\rhenium_showcase.exe" "artifacts\showcase\"
+          Copy-Item "build-release\examples\showcase\WebView2Loader.dll" "artifacts\showcase\"
+          Copy-Item "build-release\examples\showcase\rhenium.json" "artifacts\showcase\"
+          Copy-Item "build-release\tools\rhenium_cli\rhenium.exe" "artifacts\cli\"
+
+      - name: Upload Build Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: rhenium-win-x64
+          path: artifacts/
+          retention-days: 14

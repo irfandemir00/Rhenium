@@ -1,0 +1,64 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  release-windows:
+    name: Package Windows x64 Release
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup MSVC x64 environment
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+
+      - name: Configure & Build (Release Embedded)
+        shell: pwsh
+        run: |
+          cmake -B build-release -G Ninja -DCMAKE_BUILD_TYPE=Release -DRHENIUM_EMBED_ASSETS=ON
+          cmake --build build-release
+          ctest --test-dir build-release --output-on-failure
+
+      - name: Package Release Archives
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path "dist\showcase", "dist\cli", "dist\archives" | Out-Null
+          Copy-Item "build-release\examples\showcase\rhenium_showcase.exe" "dist\showcase\"
+          Copy-Item "build-release\examples\showcase\WebView2Loader.dll" "dist\showcase\"
+          Copy-Item "build-release\examples\showcase\rhenium.json" "dist\showcase\"
+          Copy-Item "LICENSE" "dist\showcase\"
+          Copy-Item "build-release\tools\rhenium_cli\rhenium.exe" "dist\cli\"
+          Copy-Item "LICENSE" "dist\cli\"
+
+          Compress-Archive -Path "dist\showcase\*" -DestinationPath "dist\archives\rhenium-showcase-win-x64.zip" -Force
+          Compress-Archive -Path "dist\cli\*" -DestinationPath "dist\archives\rhenium-cli-win-x64.zip" -Force
+
+      - name: Upload Packaged Archives
+        uses: actions/upload-artifact@v4
+        with:
+          name: rhenium-release-win-x64
+          path: dist/archives/*.zip
+
+      - name: Publish GitHub Release
+        if: startsWith(github.ref, 'refs/tags/')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: pwsh
+        run: |
+          $tag = "${{ github.ref_name }}"
+          $args = @("release", "create", $tag, "dist/archives/rhenium-showcase-win-x64.zip", "dist/archives/rhenium-cli-win-x64.zip", "--title", "Rhenium $tag", "--generate-notes")
+          if ($tag -match "-") {
+            $args += "--prerelease"
+          }
+          gh @args
